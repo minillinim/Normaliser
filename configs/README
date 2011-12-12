@@ -1,0 +1,33 @@
+How to write your own format files:
+
+Each format file consists of six parts
+
+1. The first line must contain a single character, which is the separator used in this file
+2. All lines following this line, up until the first blank line,describe the format of the header line
+   Each line consists of either a single I', 'D' or 'S'.
+
+           'I' specifies that a row/column should be ignored
+           'D' specifies that a row/column is the descriptor (primary key) - there can only be one primary descriptor per row/column
+           'S' specifies that a row/column contains a secondary descriptor - there can be multiple secondary descriptors
+
+3. A single blank line. This tells the software that the next line will be the data line
+4. The data line consists of any combination of the characters 'I',  'D', 'S' and 'M'.
+   Characters are separated by commas.
+
+           'M' specifies that this column contains data. So are all lines up until either an, I, S, D or the end of the line.
+
+5. A single blank line. This tells the software that the next line describes the order [site vs species or vice versa.]
+6. Consists of either the sole word "PN" or the sole word "NP"
+
+For example, with qiime output. This says to ignore the first line of the file, the second line is the header
+Data follows in the form of species by site and the descriptors are at the start and end of the lines
+
+--start--
+	
+I
+D
+
+D,M,S
+
+NP
+--end--

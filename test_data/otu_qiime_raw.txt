@@ -1,0 +1,5 @@
+#QIIME TEST
+#OTU ID	bed	bath	roof	ear	path	beyond	CL
+1	80	770	60	150	144	130	frog
+2	880	60	150	440	130	120	kitty
+3	110	150	140	770	80	90	duck

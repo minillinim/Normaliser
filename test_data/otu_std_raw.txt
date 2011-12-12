@@ -1,0 +1,5 @@
+#std TEST
+#Collector,SITE,lion,frog,kitty,duck,worm,alien
+fred,bed,80,77,60,150,544,130
+jim,bath,88,64,54,844,134,124
+bob,beyond,118,58,48,77,88,98
