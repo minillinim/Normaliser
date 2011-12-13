@@ -28,11 +28,10 @@ use warnings;
 
 #core Perl modules
 use Getopt::Long;
+use File::Basename;
 
 #CPAN modules
 use Statistics::R;
-use File::Basename;
-use Text::CSV;
 use Data::Dumper;
 use Storable qw(dclone);
 
@@ -45,7 +44,7 @@ BEGIN {
     $| = 1;
 }
 
-# get iPNut params and print copyright
+# get input params and print copyright
 printAtStart();
 
 my $options = checkParams();
@@ -56,39 +55,39 @@ my $options = checkParams();
 print "Checking if everything makes sense...\n";
 
 # default format is for qiime
-my @global_iPNut_format = ('\t','I','D','','D','M','S','','PN');
+my @global_input_format = ("\t",'S','D','','D','M','S','','PN');
 if(exists $options->{'if'})
 {
     print "Loadind data descriptor from: ". $options->{'if'}. "\n";
     open my $fh, "<", $options->{'if'} or die "**ERROR: Cannot open file: ".$options->{'if'}." $!\n";
-    @global_iPNut_format = ();
+    @global_input_format = ();
     while(<$fh>)
     {
         chomp $_;
         if($_ eq ',')
         {
-            push @global_iPNut_format, ',';
+            push @global_input_format, ',';
         }
         else
         {
 	        my @fields = split /,/, $_;
 	        if($#fields == -1)
 	        {
-	            push @global_iPNut_format, "";
+	            push @global_input_format, "";
 	        }
 	        else
 	        {
 		        foreach my $char (@fields)
 		        {
-		            push @global_iPNut_format, $char;
+		            push @global_input_format, $char;
 		        }
 	        }
         }
     }
     close $fh;
 }
-my $global_sep = $global_iPNut_format[0];
-my $global_type = $global_iPNut_format[-1];
+my $global_sep = $global_input_format[0];
+my $global_type = $global_input_format[-1];
 print "----------------------------------------------------------------\nData file is of type: $global_type\n";
 
 ######################################################################
@@ -116,74 +115,669 @@ my $global_data_ref;
 
 # for NP type files we need to know whether the column we're looking at contains data
 my @global_is_data_array = ();
+
 # grab some memory for the first data row
 my @first_data_row = ();
 push @global_data_matrix, \@first_data_row;
-my $global_data_ref = \@first_data_row;
-
-# we need a place to shove all of the ignores
-my @global_no_mans_land = ();
+$global_data_ref = \@first_data_row;
 
 # we need a place to store the rarefied data
-my @rarefied_data = ();
+my @global_rarefied_data = ();
+
+# we will need to store the average table too!
+my @global_rarefied_average = ();
+
+# an array to hold the distances from the average
+my @global_distances = ();
+
+# the index in the rarefied table of the closest to the average
+my $global_min_rare_index = 0;
+
+# split the input filename
+my($global_tablename, $global_wd, $suffix) = fileparse($options->{'table'});
 
 # get a working directory
-my $global_wd = "working";
 if(exists $options->{'working'}) {$global_wd = $options->{'working'}; }
 $global_wd .= "/";
 `mkdir -p $global_wd`;
 
 # output files
 my $global_dist_fh = undef;
-if(exists $options->{'dist'}) { open $global_dist_fh, ">", $options->{'dist'} or die "**ERROR: Could not open file: ".$options->{'dist'}." $!\n"; }
+if(exists $options->{'dist'}) { open $global_dist_fh, ">", $global_wd.$options->{'dist'} or die "**ERROR: Could not open file: ".$global_wd.$options->{'dist'}." $!\n"; }
 
-my $log_fn = $options->{'table'}.".log";
-if(exists $options->{'log'}) { $log_fn = $options->{'log'}; } 
+my $log_fn = $global_wd.$global_tablename.".log";
+if(exists $options->{'log'}) { $log_fn = $global_wd.$options->{'log'}; } 
 open my $global_log_fh, ">", $log_fn or die "**ERROR: Could not open file: $log_fn $!\n";
 
-my $global_out_fn = $options->{'table'}.".normalised";
-if(exists $options->{'out'}) { $global_out_fn = $options->{'out'}; } 
+my $global_out_fn_prefix = $global_wd.$global_tablename;
+if(exists $options->{'out'}) { $global_out_fn_prefix = $global_wd.$options->{'out'}; } 
 
 # work out the number of reps we need to do
-my $global_norm_num_reps = 1000;
+my $global_norm_num_reps = 100;
 if(exists $options->{'reps'}) { $global_norm_num_reps = $options->{'reps'}; }
 
 # now, load the DATA table into one huge matrix.
-my @global_DATA = ();
+my @global_DATA = (); 
 loadDATATable($options->{'table'});
 
-# parse the table according to the iPNut format
+# get the true dimensions of the data
+my $global_table_width = $#global_data_matrix;
+my $global_table_length = $#{$global_data_matrix[0]};
 
 # make rarefactions
 print "Making $global_norm_num_reps multiple rarefactions to $options->{'norm'} individuals...\n";
 makeRarefactions();
 
-die;
-my $cmd_str = "multiple_rarefactions_even_depth.py -i ".$options->{'table'}." -o $global_wd -d ".$options->{'norm'}." -n $global_norm_num_reps --lineages_included --k";
-`$cmd_str`;
-
-# find centroid
 print "Finding centroid table...\n";
-my $centroid_index = find_centroid_table();
-my $cp_str = "cp $global_wd"."/rarefaction_".$options->{'norm'}."_$centroid_index".".txt $global_out_fn";
-`$cp_str`;
+findCentroidTable();
+
+print "Printing output table(s)...\n";
+printOutput();
+
+print "Performing Statistical tests...\n";
+doStats();
 
 # clean up
 print "Cleaning up...\n";
 if(exists $options->{'dist'}) {close $global_dist_fh; }
 close $global_log_fh;
 
+print "Done!\n----------------------------------------------------------------\n";
+
 ######################################################################
 # CUSTOM SUBS
 ######################################################################
+
+sub printOutput
+{
+    #-----
+    # Print the centroid table
+    # 
+    if(!exists $options->{'of'})
+    {
+        printRaw();
+    }
+    else
+    {
+        my @outfmts = split /,/, $options->{'of'};
+        foreach my $fmt (@outfmts)
+        {
+            if($fmt eq "raw") { printRaw(); }
+            elsif($fmt eq "rel") { printRel(); }
+            elsif($fmt eq "hel") { printHel(); }
+            elsif($fmt eq "bin") { printBin(); }
+        }
+    }
+}
+
+sub printHeader
+{
+    #-----
+    # print the header to an output file
+    #
+    my ($fh_ref) = @_;
+    my $out_fh = ${$fh_ref};
+    my $format_index = 1;
+    my $sec_index = 0;
+    while($global_input_format[$format_index] ne "")
+    {
+        if($global_input_format[$format_index] eq "D")
+        {
+            # print the primary descriptor
+            print $out_fh join "$global_sep", @primary_column_descriptor;
+            print $out_fh "\n";
+        }
+        elsif($global_input_format[$format_index] eq "S")
+        {
+            # print a secondary descriptor
+            print $out_fh $secondary_column_descriptors[$sec_index]."\n";
+            $sec_index++;
+        }
+        $format_index++;
+    }    
+    return $format_index;
+}
+
+sub printRaw
+{
+    #-----
+    # Print the centroid in raw format (raw integers)
+    #
+    print "\twriting RAW format\n";
+    my $out_fn = $global_out_fn_prefix.".raw.normalised";
+    open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
+    
+    # get the centroid
+    my @centroid = @{$global_rarefied_data[$global_min_rare_index]};
+
+    # first print the headers!
+    my $saved_index = printHeader(\$out_fh);
+    
+    # now print the data
+    # we need to keep printing until all the rows are done
+    my $row_index = 0;
+    $saved_index++;
+    foreach my $prd (@primary_row_descriptor)
+    {
+        my $row_buffer = "";
+        my $sec_index = 0;
+        foreach my $counter ($saved_index .. $#global_input_format)
+        {
+            # we need to know the number of info columns
+            if($global_input_format[$counter] eq "D")
+            {
+                # primary descriptor!
+                $row_buffer .= $primary_row_descriptor[$row_index]. $global_sep;
+            }
+            elsif($global_input_format[$counter] eq "S")
+            {
+                # secondary descriptor!
+                $row_buffer .= ${$secondary_row_descriptors[$sec_index]}[$row_index]. $global_sep;
+                $sec_index++;
+            }
+            elsif($global_input_format[$counter] eq "M")
+            {
+                # data!
+                my $cell_index = 0;
+
+                # we either need to print an entire row of the main data
+                # matrix or else we need to print one entry from each column
+                if($global_type eq 'NP')
+                {
+                    # print an entire row
+                    $row_buffer .= (join $global_sep, @{$centroid[$row_index]}). $global_sep;
+                }
+                else
+                {
+                    # $global_type eq 'PN'
+                    # print one entry from each column
+                    foreach my $i (0 .. $global_table_width)
+                    {
+                        $row_buffer .=  ${$centroid[$i]}[$row_index].$global_sep;
+                    }
+                }
+            }
+            elsif($global_input_format[$counter] eq "")
+            {
+                last;
+            }
+        }
+        my $row = substr $row_buffer, 0, (length($row_buffer) - 1);
+        print $out_fh "$row\n";
+        $row_index++;
+    }
+    close $out_fh;
+}
+
+sub printHel
+{
+    #-----
+    # Print the centroid in hellinger format (sqrt of total)
+    #
+    print "\twriting HEL format\n";
+    my $out_fn = $global_out_fn_prefix.".hel.normalised";
+    open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
+
+    # get the centroid
+    my @centroid = @{$global_rarefied_data[$global_min_rare_index]};
+
+    # first print the headers!
+    my $saved_index = printHeader(\$out_fh);
+    
+    # now print the data
+    # we need to keep printing until all the rows are done
+    my $row_index = 0;
+    $saved_index++;
+    foreach my $prd (@primary_row_descriptor)
+    {
+        my $row_buffer = "";
+        my $sec_index = 0;
+        foreach my $counter ($saved_index .. $#global_input_format)
+        {
+            # we need to know the number of info columns
+            if($global_input_format[$counter] eq "D")
+            {
+                # primary descriptor!
+                $row_buffer .= $primary_row_descriptor[$row_index]. $global_sep;
+            }
+            elsif($global_input_format[$counter] eq "S")
+            {
+                # secondary descriptor!
+                $row_buffer .= ${$secondary_row_descriptors[$sec_index]}[$row_index]. $global_sep;
+                $sec_index++;
+            }
+            elsif($global_input_format[$counter] eq "M")
+            {
+                # data!
+                my $cell_index = 0;
+
+                # we either need to print an entire row of the main data
+                # matrix or else we need to print one entry from each column
+                if($global_type eq 'NP')
+                {
+                    # print an entire row
+                    foreach my $cell (@{$centroid[$row_index]})
+                    {
+                        $row_buffer .= sprintf("%.4f",(sqrt $cell)).$global_sep;
+                    }
+                }
+                else
+                {
+                    # $global_type eq 'PN'
+                    # print one entry from each column
+                    foreach my $i (0 .. $global_table_width)
+                    {
+                        $row_buffer .= sprintf("%.4f",sqrt(${$centroid[$i]}[$row_index])).$global_sep;
+                    }
+                }
+            }
+            elsif($global_input_format[$counter] eq "")
+            {
+                last;
+            }
+        }
+        my $row = substr $row_buffer, 0, (length($row_buffer) - 1);
+        print $out_fh "$row\n";
+        $row_index++;
+    }
+
+    close $out_fh;
+}
+
+sub printRel
+{
+    #-----
+    # Print the centroid in relative format (percentage of total)
+    #
+    print "\twriting REL format\n";    
+    my $out_fn = $global_out_fn_prefix.".rel.normalised";
+    open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
+
+    # get the centroid
+    my @centroid = @{$global_rarefied_data[$global_min_rare_index]};
+
+    # first print the headers!
+    my $saved_index = printHeader(\$out_fh);
+    
+    # now print the data
+    # we need to keep printing until all the rows are done
+    my $row_index = 0;
+    $saved_index++;
+    foreach my $prd (@primary_row_descriptor)
+    {
+        my $row_buffer = "";
+        my $sec_index = 0;
+        foreach my $counter ($saved_index .. $#global_input_format)
+        {
+            # we need to know the number of info columns
+            if($global_input_format[$counter] eq "D")
+            {
+                # primary descriptor!
+                $row_buffer .= $primary_row_descriptor[$row_index]. $global_sep;
+            }
+            elsif($global_input_format[$counter] eq "S")
+            {
+                # secondary descriptor!
+                $row_buffer .= ${$secondary_row_descriptors[$sec_index]}[$row_index]. $global_sep;
+                $sec_index++;
+            }
+            elsif($global_input_format[$counter] eq "M")
+            {
+                # data!
+                my $cell_index = 0;
+
+                # we either need to print an entire row of the main data
+                # matrix or else we need to print one entry from each column
+                if($global_type eq 'NP')
+                {
+                    # print an entire row
+                    foreach my $cell (@{$centroid[$row_index]})
+                    {
+                        $row_buffer .= sprintf("%.4f",($cell/$options->{'norm'})).$global_sep;
+                    }
+                }
+                else
+                {
+                    # $global_type eq 'PN'
+                    # print one entry from each column
+                    foreach my $i (0 .. $global_table_width)
+                    {
+                        $row_buffer .=  sprintf("%.4f",(${$centroid[$i]}[$row_index]/$options->{'norm'})).$global_sep;
+                    }
+                }
+            }
+            elsif($global_input_format[$counter] eq "")
+            {
+                last;
+            }
+        }
+        my $row = substr $row_buffer, 0, (length($row_buffer) - 1);
+        print $out_fh "$row\n";
+        $row_index++;
+    }
+    close $out_fh;
+}
+
+sub printBin
+{
+    #-----
+    # Print the centroid in binary format (presence/absense)
+    #
+    print "\twriting BIN format\n";
+    my $out_fn = $global_out_fn_prefix.".bin.normalised";
+    open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
+
+    # get the centroid
+    my @centroid = @{$global_rarefied_data[$global_min_rare_index]};
+
+    # first print the headers!
+    my $saved_index = printHeader(\$out_fh);
+    
+    # now print the data
+    # we need to keep printing until all the rows are done
+    my $row_index = 0;
+    $saved_index++;
+    foreach my $prd (@primary_row_descriptor)
+    {
+        my $row_buffer = "";
+        my $sec_index = 0;
+        foreach my $counter ($saved_index .. $#global_input_format)
+        {
+            # we need to know the number of info columns
+            if($global_input_format[$counter] eq "D")
+            {
+                # primary descriptor!
+                $row_buffer .= $primary_row_descriptor[$row_index]. $global_sep;
+            }
+            elsif($global_input_format[$counter] eq "S")
+            {
+                # secondary descriptor!
+                $row_buffer .= ${$secondary_row_descriptors[$sec_index]}[$row_index]. $global_sep;
+                $sec_index++;
+            }
+            elsif($global_input_format[$counter] eq "M")
+            {
+                # data!
+                my $cell_index = 0;
+
+                # we either need to print an entire row of the main data
+                # matrix or else we need to print one entry from each column
+                if($global_type eq 'NP')
+                {
+                    # print an entire row
+                    foreach my $cell (@{$centroid[$row_index]})
+                    {
+                        if(0 == $cell) { $row_buffer .= "0$global_sep"; }
+                        else { $row_buffer .= "1$global_sep"; }
+                    }
+                }
+                else
+                {
+                    # $global_type eq 'PN'
+                    # print one entry from each column
+                    foreach my $i (0 .. $global_table_width)
+                    {
+                        if(0 == ${$centroid[$i]}[$row_index]) { $row_buffer .= "0$global_sep"; }
+                        else { $row_buffer .= "1$global_sep"; }
+                    }
+                }
+            }
+            elsif($global_input_format[$counter] eq "")
+            {
+                last;
+            }
+        }
+        my $row = substr $row_buffer, 0, (length($row_buffer) - 1);
+        print $out_fh "$row\n";
+        $row_index++;
+    }
+    close $out_fh;
+}
+
+sub doStats
+{
+    #-----
+    # Wrapper for doing stats
+    #
+    # first we print the average and the centroid to two files
+    my $ave_fn = $global_wd."AVE.dat";
+    my $cent_fn = $global_wd."CENT.dat";
+    open my $ave_fh, ">", $ave_fn or die "**ERROR: Cannot open file: $ave_fn for writing $!\n";
+    open my $cent_fh, ">", $cent_fn or die "**ERROR: Cannot open file: $cent_fn for writing $!\n";
+    
+    # get the centroid    
+    my @centroid = @{$global_rarefied_data[$global_min_rare_index]};
+    
+    # and print
+    for my $i (0..$global_table_width)
+    {
+        print $ave_fh ${$global_rarefied_average[$i]}[0];
+        print $cent_fh $centroid[$i][0];
+        for my $j (1..$global_table_length)
+        {
+           print $ave_fh ",".${$global_rarefied_average[$i]}[$j];
+           print $cent_fh ",".$centroid[$i][$j];
+        }
+        print $ave_fh "\n";
+        print $cent_fh "\n";
+    }
+
+    close $ave_fh;
+    close $cent_fh;
+
+    if(2 < $global_num_samples)
+    {
+        #### Create a communication bridge with R and start R
+        my $R_instance = Statistics::R->new();
+        $R_instance->start();
+
+        # load libraries
+        $R_instance->run(qq`library(permute);`);
+        $R_instance->run(qq`library(vegan);`);
+    
+        # read in the tmp files
+        my $r_str = "ave<-read.csv(\"$ave_fn\",sep=\",\")";
+        $R_instance->run($r_str);  
+        print "$r_str\n";  
+        $r_str = "cent<-read.csv(\"$cent_fn\",sep=\",\")";
+        $R_instance->run($r_str);    
+        print "$r_str\n";  
+        $R_instance->run(qq`ave<-as.matrix(dist(t(ave), upper=TRUE, diag=TRUE))`);    
+        $R_instance->run(qq`cent<-as.matrix(dist(t(cent), upper=TRUE, diag=TRUE))`);
+        
+        $R_instance->run(qq`mantel.DATA <- mantel(ave,cent);`);
+        $R_instance->run(qq`m_stat <- mantel.DATA\$statistic;`);
+        $R_instance->run(qq`m_sig <- mantel.DATA\$signif;`);
+        print $global_log_fh "Mantel P stat:\t".$R_instance->get('m_sig')."\n";
+        print $global_log_fh "Mantel R stat:\t".$R_instance->get('m_stat')."\n";
+    }
+    else
+    {
+        print $global_log_fh "Too few samples to perform a statistical tests.\n";
+    }
+}
+
+
+sub findCentroidTable
+{
+    #-----
+    # find the rarefied table which is closest to the "average"
+    # stored in @global_rarefied_average
+    #
+    
+    # work out the distances from the average
+    my %distances = ();
+    my $rare_index = 0;
+    foreach my $rarefaction (@global_rarefied_data)
+    {
+        my $dist = findEucDistFromAve($rarefaction);
+        $distances{$rare_index} = $dist;
+        if(exists $options->{'dist'})
+        {
+            print $global_dist_fh "$dist\n";
+        }
+        $rare_index++;
+    }
+
+    # find the guy with the least distance, and other stats
+    my $max_dist = 0;
+    my $min_dist = 1000000000;
+    my $mean_dist = 0;
+    foreach my $key (keys %distances)
+    {
+        $mean_dist += $distances{$key};
+        if($distances{$key} > $max_dist)
+        {
+            $max_dist = $distances{$key};
+        }
+
+        if($distances{$key} < $min_dist)
+        {
+            $min_dist = $distances{$key};
+            $global_min_rare_index = $key;
+        }
+    }
+    $mean_dist /= $global_norm_num_reps;
+    
+    print $global_log_fh "---------------------------------------------------\n";
+    print $global_log_fh "  Centroid DATA table based normalised statistics\n";
+    print $global_log_fh "---------------------------------------------------\n";
+    print $global_log_fh "Max dist:\t$max_dist\n";
+    print $global_log_fh "Min dist:\t$min_dist\n";
+    print $global_log_fh "Range:\t".($max_dist - $min_dist)."\n";
+    print $global_log_fh "Mean:\t$mean_dist\n";
+}
+
+sub findEucDistFromAve
+{
+    #-----
+    # find the euclidean distance 
+    #
+    my ($rare_ref) = @_;
+    my $dist = 0;
+    for my $i (0..$global_table_width)
+    {
+        for my $j (0..$global_table_length)
+        {
+            $dist += (${${$rare_ref}[$i]}[$j] - ${$global_rarefied_average[$i]}[$j])**2;
+        }
+    }
+    return sqrt($dist);
+}
+
 sub makeRarefactions
 {
     #-----
     # make rarefactions of the data table
+    # output is an array of rarefied data tables
+    # and an "average" table
     #
-    my @rarefied_data_table = @{ dclone(\@global_data_matrix) }
+    # set up our averages martix
+    for my $i (0..$global_table_width)
+    {
+        my @tmp_array = ();
+        for my $j (0..$global_table_length)
+        {
+            push @tmp_array, 0;
+        }
+        push @global_rarefied_average, \@tmp_array; 
+    }
     
+    for my $counter (1 .. $global_norm_num_reps)
+    {
+        my @tmp_data_table = @{ dclone(\@global_data_matrix) };
+        rarefyTable(\@tmp_data_table);
+        push @global_rarefied_data, \@tmp_data_table;
+    }
+    
+    # now average
+    for my $i (0..$global_table_width)
+    {
+        for my $j (0..$global_table_length)
+        {
+            ${$global_rarefied_average[$i]}[$j] /= $global_norm_num_reps;
+        }
+    }
 }
+
+sub rarefyTable
+{
+    #-----
+    # Do an individual rarefaction
+    # This could be easily parallelised!
+    #
+    #
+    my ($rare_ref) = @_;
+    my $row_index = 0;
+    foreach my $row (@{$rare_ref})
+    {
+        # get the total number of individuals
+        my $total_individuals = 0;
+        
+        # use these vars to select which cels to diminish (randomly)
+        my %non_zero_indicies = ();
+        my $meta_index = 0;
+        my $cell_index = 0;
+        
+        # set up our vars
+        foreach my $cell (@{$row})
+        {
+            if(0 != $cell)
+            {
+                $total_individuals += $cell;
+                $non_zero_indicies{$meta_index} = $cell_index;
+                $meta_index++;
+            }
+            $cell_index++;
+        }
+        
+        # we need to make sure that there are enough guys to make this
+        # normalisation feasible
+        if($total_individuals < $options->{'norm'})
+        {
+            if($global_type eq 'PN')
+            {
+                die "**ERROR: SITE: \"$primary_column_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to $options->{'norm'}\n";
+            }
+            else
+            {
+                die "**ERROR: SITE: \"$primary_row_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to $options->{'norm'}\n";
+            }
+        }
+        elsif($total_individuals == $options->{'norm'})
+        {
+            if($global_type eq 'PN')
+            {
+                print "**WARNING: SITE: \"$primary_column_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to the same amount\n";
+            }
+            else
+            {
+                print "**WARNING: SITE: \"$primary_row_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to the same amount\n";
+            }
+        }
+        
+        # rarefy!
+        while($total_individuals > $options->{'norm'})
+        {
+            my $deduce_index = $non_zero_indicies{int(rand($meta_index))};
+            if(0 != ${$row}[$deduce_index])
+            {
+                ${$row}[$deduce_index]--;
+                $total_individuals--;
+            }
+        }
+        
+        # add this guy to the averages table
+        $cell_index = 0;
+        foreach my $cell (@{$row})
+        {
+            ${$global_rarefied_average[$row_index]}[$cell_index] += $cell;
+            $cell_index++;
+        }
+        $row_index++;
+    }
+}
+
 sub loadDATATable
 {
     #-----
@@ -198,34 +792,29 @@ sub loadDATATable
         chomp $_;
         $format_index++;
         # if we're still in the header, we need to do some special stuff!
-        if(1 == $in_header and $global_iPNut_format[$format_index] ne "")
+        if(1 == $in_header and $global_input_format[$format_index] ne "")
         {
-            if($global_iPNut_format[$format_index] eq "I")
-            {
-                # we ignore this line
-            }
-            elsif($global_iPNut_format[$format_index] eq "D")
+            if($global_input_format[$format_index] eq "D")
             {
                 # primary descriptor
                 @primary_column_descriptor = split $global_sep, $_;
                 $global_total_columns = $#primary_column_descriptor + 1;
                 print "Found $global_total_columns columns in total\n";
             }
-            elsif($global_iPNut_format[$format_index] eq "D")
+            elsif($global_input_format[$format_index] eq "S")
             {
                 # secondary descriptor 
-                my @tmp_array = split $global_sep, $_;
-                push @secondary_column_descriptors, \@tmp_array;
+                push @secondary_column_descriptors, $_;
             }
             else
             {
-                die "**ERROR: Unknown character \"".$global_iPNut_format[$format_index]."\" in format file. Exiting.\n";
+                die "**ERROR: Unknown character \"".$global_input_format[$format_index]."\" in format file. Exiting.\n";
             }
             $global_num_header_lines++;
         }
         else
         {
-            if(1 == $in_header and $global_iPNut_format[$format_index] eq "")
+            if(1 == $in_header and $global_input_format[$format_index] eq "")
             {
                 # transition
                 $in_header = 0;
@@ -242,7 +831,7 @@ sub loadDATATable
                 $global_data_ref = \@tmp_data_row;
                 # now we definitely have an array in memory
             }
-            
+
             my @data_fields = split $global_sep, $_;
             my $row_index = 0;
             
@@ -268,7 +857,7 @@ sub loadDATATable
             else
             {
                 # $global_type eq 'PN'
-                # we are effectively transversing the array during parsing
+                # we are effectively tranposing the array during parsing
                 foreach my $field (@data_fields)
                 {
                     push @{$global_column_info_indicies[$row_index]}, $field;
@@ -278,7 +867,6 @@ sub loadDATATable
         }
     }
     close $fh; 
-    print Dumper @global_data_matrix;
 }
 
 sub createParser
@@ -289,10 +877,10 @@ sub createParser
     #
     my ($saved_index) = @_;
     my $M_seen = 0;
-    foreach my $counter ($saved_index .. $#global_iPNut_format)
+    foreach my $counter ($saved_index .. $#global_input_format)
     {
         # we need to know the number of info columns
-        if($global_iPNut_format[$counter] eq "D" || $global_iPNut_format[$counter] eq "S")
+        if($global_input_format[$counter] eq "D" || $global_input_format[$counter] eq "S")
         {
             if(0 == $M_seen)
             {
@@ -304,21 +892,17 @@ sub createParser
             }
             
         }
-        elsif($global_iPNut_format[$counter] eq "M")
+        elsif($global_input_format[$counter] eq "M")
         {
             $M_seen = 1;
         }
-        elsif($global_iPNut_format[$counter] eq "I")
-        {
-            $global_num_ignore_columns++;
-        }
-        elsif($global_iPNut_format[$counter] eq "")
+        elsif($global_input_format[$counter] eq "")
         {
             last;
         }
         else
         {
-            die "**ERROR: Unknown character \"".$global_iPNut_format[$counter]."\" in format file. Exiting.\n";
+            die "**ERROR: Unknown character \"".$global_input_format[$counter]."\" in format file. Exiting.\n";
         }
     }
     $global_num_samples = $global_total_columns - $global_num_front_info_columns - $global_num_rear_info_columns - $global_num_ignore_columns;
@@ -327,17 +911,17 @@ sub createParser
     
     # determine the indicies of the data and info columns
     my $row_index = 0;
-    foreach my $counter ($saved_index .. $#global_iPNut_format)
+    foreach my $counter ($saved_index .. $#global_input_format)
     {
         # we need to know the number of info columns
-        if($global_iPNut_format[$counter] eq "D")
+        if($global_input_format[$counter] eq "D")
         {
             # primary descriptor!
             $global_column_info_indicies[$row_index] = \@primary_row_descriptor;
             push @global_is_data_array, 0;
             $row_index++;
         }
-        elsif($global_iPNut_format[$counter] eq "S")
+        elsif($global_input_format[$counter] eq "S")
         {
             # secondary descriptor!
             my @tmp_desc_array = ();
@@ -346,14 +930,7 @@ sub createParser
             push @global_is_data_array, 0;
             $row_index++;
         }
-        elsif($global_iPNut_format[$counter] eq "I")
-        {
-            # Ignore!
-            $global_column_info_indicies[$row_index] = \@global_no_mans_land;
-            push @global_is_data_array, 0;
-            $row_index++;
-        }
-        elsif($global_iPNut_format[$counter] eq "M")
+        elsif($global_input_format[$counter] eq "M")
         {
             # data!
             my $last_row_index = $row_index + $global_num_samples;
@@ -374,6 +951,7 @@ sub createParser
             else
             {
                 # $global_type eq 'PN'
+                $#global_data_matrix = -1; # we need tyo reset this mo-fo
                 while($row_index < $last_row_index)
                 {
                     my @tmp_data_column = ();
@@ -383,106 +961,23 @@ sub createParser
                     $row_index++;
                 }
             }
-            
         }
-        elsif($global_iPNut_format[$counter] eq "")
+        elsif($global_input_format[$counter] eq "")
         {
             last;
         }
         else
         {
-            die "**ERROR: Unknown character \"".$global_iPNut_format[$counter]."\" in format file. Exiting.\n";
+            die "**ERROR: Unknown character \"".$global_input_format[$counter]."\" in format file. Exiting.\n";
         }
     }
-}
-
-sub find_centroid_table
-{
-    #-----
-    # Find a representative set of $global_norm_sample_size sequences (do this in RRRRRR...)
-    #
-    #### Create a communication bridge with R and start R
-    my $R_instance = Statistics::R->new();
-    $R_instance->start();
-
-    my $sampl_p1 = $global_num_samples + 1;
-    
-    # read in the list of distance matricies
-    $R_instance->run(qq`library(foreign);`);
-    $R_instance->run(qq`a<-list.files("$global_wd", "*.txt");`);
-    
-    # work out how many there are and allocate an array
-    $R_instance->run(qq`len_a <- length(a);`);
-    $R_instance->run(qq`big_frame <- array(0,dim=c($global_num_samples,$global_num_samples,len_a));`);
-    
-    # load each file individually into a big frame
-    my $r_str = "for (i in c(1:len_a)) { j <- i - 1; name <- paste(\"$global_wd\",\"rarefaction_".$options->{'norm'}."\",\"_\",j,\".txt\",sep=\"\"); u<-read.table(name,sep=\"\\t\",row.names=1); u[,$sampl_p1]<-NULL; big_frame[,,i]<-as.matrix(dist(t(u), upper=TRUE, diag=TRUE)); i<-i+1; }";
-    $R_instance->run($r_str);    
-
-    # find the average matrix
-    $R_instance->run(qq`ave <- big_frame[,,1];`);
-    $R_instance->run(qq`for (i in c(2:len_a)) { ave <- ave + big_frame[,,i]; }`);
-    $R_instance->run(qq`ave <- ave/len_a;`);
-    
-    # find the euclidean distance of each matrix from the average
-    $R_instance->run(qq`dist<-array(0,dim=c(len_a));`);
-    $R_instance->run(qq`for (i in c(1:len_a)) { dist[i] <- sqrt(sum(big_frame[,,i]-ave)^2); }`);
-    
-    # find the min value
-    $R_instance->run(qq`min_index <- which.min(dist);`);
-    my $centroid_DATA_index = $R_instance->get('min_index');
-    
-    # make stats on the distances
-    # and log what we did
-    $R_instance->run(qq`max_dist <- max(dist);`);
-    $R_instance->run(qq`min_dist <- min(dist);`);
-    $R_instance->run(qq`range_dist <- max_dist - min_dist;`);
-    $R_instance->run(qq`mean_dist <- mean(dist);`);
-    $R_instance->run(qq`median_dist <- median(dist);`);
-    
-    print $global_log_fh "---------------------------------------------------\n";
-    print $global_log_fh "  Centroid DATA table based normalised statistics\n";
-    print $global_log_fh "---------------------------------------------------\n";
-    print $global_log_fh "Max dist:\t".$R_instance->get('max_dist')."\n";
-    print $global_log_fh "Min dist:\t".$R_instance->get('min_dist')."\n";
-    print $global_log_fh "Range:\t".$R_instance->get('range_dist')."\n";
-    print $global_log_fh "Mean:\t".$R_instance->get('mean_dist')."\n";
-    print $global_log_fh "Median:\t".$R_instance->get('median_dist')."\n";
-  
-    if(2 < $global_num_samples)
-    {
-        $R_instance->run(qq`library(permute);`);
-        $R_instance->run(qq`library(vegan);`);
-        $R_instance->run(qq`mantel.DATA <- mantel(ave,big_frame[,,min_index]);`);
-        $R_instance->run(qq`m_stat <- mantel.DATA\$statistic;`);
-        $R_instance->run(qq`m_sig <- mantel.DATA\$signif;`);
-        print $global_log_fh "Mantel P stat:\t".$R_instance->get('m_sig')."\n";
-        print $global_log_fh "Mantel R stat:\t".$R_instance->get('m_stat')."\n";
-    }
-    else
-    {
-        print $global_log_fh "Too few samples to perform a mantel test.\n";
-    }
-    
-    # print all the distances to a file so we can make purdy pictures from them later
-    if(exists $options->{'dist'})
-    {
-        my $num_tables = $R_instance->get('len_a');
-        foreach my $counter (1..$num_tables)
-        {
-            print $global_dist_fh $R_instance->get("dist[$counter]")."\n"         
-        }
-    }   
-
-    # let the user know the result
-    return $centroid_DATA_index - 1;     
 }
 
 ######################################################################
 # TEMPLATE SUBS
 ######################################################################
 sub checkParams {
-    my @standard_options = ( "help|h+", "out|o:s", "table|t:s", "norm|n:i", "log|l:s", "dist|d:s", "reps|r:i", "working|w:s", "ot:s", "of:s", "if:s");
+    my @standard_options = ( "help|h+", "of|f:s", "out|o:s", "table|t:s", "norm|n:i", "log|l:s", "dist|d:s", "reps|r:i", "working|w:s", "if|i:s");
     my %options;
 
     # Add any other command line options, and the code to handle them
@@ -501,6 +996,19 @@ sub checkParams {
     #if(!exists $options{''} ) { print "**ERROR: \n"; exec("pod2usage $0"); }
     if(!exists $options{'table'} ) { print "**ERROR: You need to tell me which DATA table to normalise\n"; exec("pod2usage $0"); }
     if(!exists $options{'norm'} ) { print "**ERROR: You need to specify the number of sequences to normalise to\n"; exec("pod2usage $0"); }
+
+    # check that the output formats make sense
+    if(exists $options{'of'}) 
+    {
+        my @outfmts = split /,/, $options{'of'};
+        foreach my $fmt (@outfmts)
+        {
+            if(($fmt ne "raw") and ($fmt ne "rel") and ($fmt ne "hel") and ($fmt ne "bin"))
+            {
+                print "**ERROR: Unknown output format \"$fmt\"\n"; exec("pod2usage $0"); 
+            }
+        }
+    }
 
     return \%options;
 }
@@ -551,16 +1059,16 @@ __DATA__
     
     Normalise a set of DATA tables
 
-      -table -t DATA_TABLE                  DATA table to normalise
-      -norm -n NORMALISATION_SIZE           Number of sequences to normalise to
-      [-reps -r NUM_REPS]                   Number of reps to take (default: 1000)
-      [-working -w WORKING_DIR]             Place to put the multitude of files which will be created (default: working) 
-      [-out -o OUT_FILE_PREFIX]             Output normalised file prefix (default: DATA_TABLE.normalised)
-      [-ot OUTPUT_TYPE[,OUTPUT_TYPE,...]]   Output types: raw,rel,hel,bin (default: raw only) 
-      [-if IPNUT_FORMAT_FILE]               File to specify the type of the iPNut format                    
-      [-log -l LOG_FILE]                    File to store results of mantel tests etc... (default: DATA_TABLE.log)
-      [-dist -d DIST_FILE]                  File to store DATA table distances
-      [-help -h]                            Displays basic usage information
+      -table -t DATA_TABLE                   DATA table to normalise
+      -norm -n NORMALISATION_SIZE            Number of sequences to normalise to
+      [-reps -r NUM_REPS]                    Number of reps to take (default: 100)
+      [-working -w WORKING_DIR]              Place to put any files which will be created (default: location of DATA_TABLE) 
+      [-out -o OUT_FILE_PREFIX]              Output normalised file prefix (default: DATA_TABLE)
+      [-of -f OUTPUT_TYPE[,OUTPUT_TYPE,...]] Output formats: raw,rel,hel,bin (default: raw only) 
+      [-if -i INPUT_FORMAT_FILE]             File to specify the type of the input format (default: QIIME style)                    
+      [-log -l LOG_FILE]                     File to store results of mantel tests etc... (default: DATA_TABLE.log)
+      [-dist -d DIST_FILE]                   File to store DATA table distances
+      [-help -h]                             Displays basic usage information
 
 =cut
 
