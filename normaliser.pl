@@ -70,18 +70,18 @@ if(exists $options->{'if'})
         }
         else
         {
-	        my @fields = split /,/, $_;
-	        if($#fields == -1)
-	        {
-	            push @global_input_format, "";
-	        }
-	        else
-	        {
-		        foreach my $char (@fields)
-		        {
-		            push @global_input_format, $char;
-		        }
-	        }
+           my @fields = split /,/, $_;
+           if($#fields == -1)
+           {
+               push @global_input_format, "";
+           }
+           else
+           {
+               foreach my $char (@fields)
+               {
+                   push @global_input_format, $char;
+               }
+           }
         }
     }
     close $fh;
@@ -94,6 +94,9 @@ print "----------------------------------------------------------------\nData fi
 my $global_dist_measure = "euclidean";
 if(exists $options->{'measure'}) { $global_dist_measure = $options->{'measure'}; }
 print "Distance measurement is: $global_dist_measure\n";
+# for chord, we will need to work out the norms of the rarefied table
+# multiple times unless we do it once and store it somewhere
+my @global_table_norms = ();
 
 ######################################################################
 # csv file particulars
@@ -166,35 +169,35 @@ my @global_DATA = ();
 loadDATATable($options->{'table'});
 
 # get the true dimensions of the data
-my $global_table_width = $#global_data_matrix;
-my $global_table_length = $#{$global_data_matrix[0]};
+my $global_table_width = $#global_data_matrix;                  # width is the number of sites in the data matrix
+my $global_table_length = $#{$global_data_matrix[0]};           # length is the total number of species seen across all of the sites
 
 # make rarefactions
 my $global_norm_size = 0; 
 my @norm_sizes = split /,/, $options->{'norm'};
 foreach my $ns (@norm_sizes)
 {
-	# set the current normalisation size
-	$global_norm_size = $ns;
-	
-	# open a file for recording distance measurements (if needed)
-	my $dist_fn = $global_wd."DISTS.$global_norm_size.dat";
-	if(exists $options->{'dist'}) { open $global_dist_fh, ">", $dist_fn or die "**ERROR: Could not open file: $dist_fn $!\n"; }
-	
-	print "Making $global_norm_num_reps multiple rarefactions to $global_norm_size individuals...\n";
-	makeRarefactions();
-	
-	print "Finding centroid table...\n";
-	findCentroidTable();
-	
-	print "Printing output table(s)...\n";
-	printOutput();
-	
-	print "Performing Statistical tests...\n";
-	doStats();
+    # set the current normalisation size
+    $global_norm_size = $ns;
+    
+    # open a file for recording distance measurements (if needed)
+    my $dist_fn = $global_wd."DISTS.$global_norm_size.dat";
+    if(exists $options->{'dist'}) { open $global_dist_fh, ">", $dist_fn or die "**ERROR: Could not open file: $dist_fn $!\n"; }
+    
+    print "Making $global_norm_num_reps multiple rarefactions to $global_norm_size individuals...\n";
+    makeRarefactions();
+    
+    print "Finding centroid table...\n";
+    findCentroidTable();
+    
+    print "Printing output table(s)...\n";
+    printOutput();
+    
+    print "Performing Statistical tests...\n";
+    doStats();
 
-	# close this fella
-	if(exists $options->{'dist'}) {close $global_dist_fh; }
+    # close this fella
+    if(exists $options->{'dist'}) {close $global_dist_fh; }
 }
 
 # clean up
@@ -377,7 +380,7 @@ sub printHel
                     # print an entire row
                     foreach my $cell (@{$centroid[$row_index]})
                     {
-                        $row_buffer .= sprintf("%.4f",(sqrt $cell)).$global_sep;
+                        $row_buffer .= sprintf("%.4f",(sqrt($cell/$global_norm_size))).$global_sep;
                     }
                 }
                 else
@@ -386,7 +389,7 @@ sub printHel
                     # print one entry from each column
                     foreach my $i (0 .. $global_table_width)
                     {
-                        $row_buffer .= sprintf("%.4f",sqrt(${$centroid[$i]}[$row_index])).$global_sep;
+                        $row_buffer .= sprintf("%.4f",sqrt((${$centroid[$i]}[$row_index]/$global_norm_size))).$global_sep;
                     }
                 }
             }
@@ -627,6 +630,19 @@ sub findCentroidTable
     my $rare_index = 0;
     no strict 'refs';
     my $dist_function = "find_".$global_dist_measure."_distFromAve";
+    
+    $#global_table_norms = -1;
+    if("chord" eq $global_dist_measure)
+    {
+        # we need to work out the norms of many vectors
+        # and we need to do this for the centroid matrix many times
+        # so just do it once here
+        for my $i (0..$global_table_width)
+	    {
+	        push @global_table_norms, findNorm($global_rarefied_average[$i]);
+	    }
+         
+    }
     foreach my $rarefaction (@global_rarefied_data)
     {
         my $dist = &{$dist_function}($rarefaction);
@@ -667,6 +683,74 @@ sub findCentroidTable
     print $global_log_fh "Mean:\t$mean_dist\n";
 }
 
+sub find_chord_distFromAve
+{
+    #-----
+    # find the chord distance 
+    # width is the number of sites in the data matrix
+    # length is the total number of species seen across all of the sites
+    #
+    my ($rare_ref) = @_;
+    my $dist = 0;
+    for my $i (0..$global_table_width)
+    {
+        my $rare_norm = findNorm(${$rare_ref}[$i]);
+        for my $j (0..$global_table_length)
+        {
+            $dist += (${${$rare_ref}[$i]}[$j]/$rare_norm - ${$global_rarefied_average[$i]}[$j]/$global_table_norms[$i])**2;
+        }
+    }
+    return sqrt($dist);
+}
+
+sub findNorm
+{
+    #-----
+    # Given a vector, find it's norm - used for chord distance
+    # 
+    my ($vec_ref) = @_;
+    my $norm = 0;
+    foreach my $vector_value (@{$vec_ref})
+    {
+        $norm += $vector_value**2;
+    }
+    return sqrt $norm;
+}
+
+sub find_bineuc_distFromAve
+{
+    #-----
+    # find the binary euclidean distance 
+    #
+    my ($rare_ref) = @_;
+    my $dist = 0;
+    for my $i (0..$global_table_width)
+    {
+        for my $j (0..$global_table_length)
+        {
+            if(${${$rare_ref}[$i]}[$j] > 0)
+            {
+                if(${$global_rarefied_average[$i]}[$j] == 0)
+                {
+                    # dist is 1
+                    $dist++;
+                }
+                # else dist is 0
+            }
+            else # ${${$rare_ref}[$i]}[$j] == 0
+            {
+                if(${$global_rarefied_average[$i]}[$j] > 0)
+                {
+                    # dist is 1
+                    $dist++;
+                }
+                # else dist is 0
+            }
+        }
+    }
+    return sqrt($dist);
+}
+
 sub find_euclidean_distFromAve
 {
     #-----
@@ -687,7 +771,7 @@ sub find_euclidean_distFromAve
 sub find_hellinger_distFromAve
 {
     #-----
-    # find the euclidean distance 
+    # find the hellinger distance 
     #
     my ($rare_ref) = @_;
     my $dist = 0;
@@ -695,16 +779,16 @@ sub find_hellinger_distFromAve
     {
         for my $j (0..$global_table_length)
         {
-            $dist += (sqrt(${${$rare_ref}[$i]}[$j]) - sqrt(${$global_rarefied_average[$i]}[$j]))**2;
+            $dist += (sqrt((${${$rare_ref}[$i]}[$j])/$global_norm_size) - sqrt((${$global_rarefied_average[$i]}[$j])/$global_norm_size))**2;
         }
     }
     return sqrt($dist);
 }
 
-sub find_braycurtis_distFromAve
+sub find_bray_distFromAve
 {
     #-----
-    # find the euclidean distance 
+    # find the bray curtis distance 
     #
     my ($rare_ref) = @_;
     my $dist = 0;
@@ -996,13 +1080,13 @@ sub createParser
             if($global_type eq 'NP')
             {
                 # we will normalise row-wise data
-	            while($row_index < $last_row_index)
-	            {
-	                # make all these guys point at a reference to a reference
-	                $global_column_info_indicies[$row_index] = \$global_data_ref;
+               while($row_index < $last_row_index)
+               {
+                   # make all these guys point at a reference to a reference
+                   $global_column_info_indicies[$row_index] = \$global_data_ref;
                     push @global_is_data_array, 1;
-	                $row_index++;
-	            }
+                   $row_index++;
+               }
             }
             else
             {
@@ -1069,10 +1153,16 @@ sub checkParams {
     # check the distance type makes sense
     if(exists $options{'measure'})
     {
-    	if(($options{'measure'} ne "euclidean") and ($options{'measure'} ne "hellinger") and ($options{'measure'} ne "braycurtis"))
-    	{
-    		die "**ERROR: Distance measure MUST be either \"euclidean\" OR \"hellinger\" OR \"braycurtis\"\n";
-    	}
+        if(
+            ($options{'measure'} ne "euclidean") and 
+            ($options{'measure'} ne "hellinger") and 
+            ($options{'measure'} ne "bray") and 
+            ($options{'measure'} ne "bineuc") and 
+            ($options{'measure'} ne "chord")
+          )
+        {
+            print "**ERROR: Distance measure \"$options{'measure'}\" not recognised\n"; exec("pod2usage $0");
+        }
     }
 
     return \%options;
@@ -1127,7 +1217,12 @@ __DATA__
       -table -t DATA_TABLE                   DATA table to normalise
       -norm -n NORM_SIZE[,NORM_SIZE,...]     Number of sequences to normalise to. Multiples are comma separated
       [-reps -r NUM_REPS]                    Number of reps to take (default: 100)
-      [-measure -m TYPE]					 The type of distance measurement: euclidean OR hellinger OR braycurtis (default: euclidean)
+      [-measure -m TYPE]                     The type of distance measurement: (default: euclidean)
+                                                euclidean   - Plain vanilla eulciean distance
+                                                hellinger   - Euclidean distance of hellinger tranformed matrix
+                                                bray        - Bray curtis distance
+                                                chord       - Chord distance
+                                                bineuc      - Euclidean distance of presence absence matrix
       [-working -w WORKING_DIR]              A place to put any and all files that are created (default: location of DATA_TABLE) 
       [-out -o OUT_FILE_PREFIX]              Output normalised file prefix (default: DATA_TABLE)
       [-of -f OUTPUT_TYPE[,OUTPUT_TYPE,...]] Output formats: raw,rel,hel,bin (default: raw only) 
