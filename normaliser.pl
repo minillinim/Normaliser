@@ -90,6 +90,11 @@ my $global_sep = $global_input_format[0];
 my $global_type = $global_input_format[-1];
 print "----------------------------------------------------------------\nData file is of type: $global_type\n";
 
+# work out the distance measure
+my $global_dist_measure = "euclidean";
+if(exists $options->{'measure'}) { $global_dist_measure = $options->{'measure'}; }
+print "Distance measurement is: $global_dist_measure\n";
+
 ######################################################################
 # csv file particulars
 ######################################################################
@@ -147,6 +152,7 @@ my $global_dist_fh = undef;
 my $log_fn = $global_wd.$global_tablename.".log";
 if(exists $options->{'log'}) { $log_fn = $global_wd.$options->{'log'}; } 
 open my $global_log_fh, ">", $log_fn or die "**ERROR: Could not open file: $log_fn $!\n";
+print $global_log_fh "----------------------------------------------------------------\nDistance measurement is: $global_dist_measure\n";
 
 my $global_out_fn_prefix = $global_wd.$global_tablename;
 if(exists $options->{'out'}) { $global_out_fn_prefix = $global_wd.$options->{'out'}; } 
@@ -619,9 +625,11 @@ sub findCentroidTable
     # work out the distances from the average
     my %distances = ();
     my $rare_index = 0;
+    no strict 'refs';
+    my $dist_function = "find_".$global_dist_measure."_distFromAve";
     foreach my $rarefaction (@global_rarefied_data)
     {
-        my $dist = findEucDistFromAve($rarefaction);
+        my $dist = &{$dist_function}($rarefaction);
         $distances{$rare_index} = $dist;
         if(exists $options->{'dist'})
         {
@@ -659,7 +667,7 @@ sub findCentroidTable
     print $global_log_fh "Mean:\t$mean_dist\n";
 }
 
-sub findEucDistFromAve
+sub find_euclidean_distFromAve
 {
     #-----
     # find the euclidean distance 
@@ -674,6 +682,43 @@ sub findEucDistFromAve
         }
     }
     return sqrt($dist);
+}
+
+sub find_hellinger_distFromAve
+{
+    #-----
+    # find the euclidean distance 
+    #
+    my ($rare_ref) = @_;
+    my $dist = 0;
+    for my $i (0..$global_table_width)
+    {
+        for my $j (0..$global_table_length)
+        {
+            $dist += (sqrt(${${$rare_ref}[$i]}[$j]) - sqrt(${$global_rarefied_average[$i]}[$j]))**2;
+        }
+    }
+    return sqrt($dist);
+}
+
+sub find_braycurtis_distFromAve
+{
+    #-----
+    # find the euclidean distance 
+    #
+    my ($rare_ref) = @_;
+    my $dist = 0;
+    my $numerator = 0;
+    my $denominator = 0;
+    for my $i (0..$global_table_width)
+    {
+        for my $j (0..$global_table_length)
+        {
+            $numerator += abs(${${$rare_ref}[$i]}[$j] - ${$global_rarefied_average[$i]}[$j]);
+            $denominator += ${${$rare_ref}[$i]}[$j] + ${$global_rarefied_average[$i]}[$j];
+        }
+    }
+    return $numerator/$denominator;
 }
 
 sub makeRarefactions
@@ -988,7 +1033,7 @@ sub createParser
 # TEMPLATE SUBS
 ######################################################################
 sub checkParams {
-    my @standard_options = ( "help|h+", "of|f:s", "out|o:s", "table|t:s", "norm|n:s", "log|l:s", "dist|d+", "reps|r:i", "working|w:s", "if|i:s");
+    my @standard_options = ( "help|h+", "of|f:s", "out|o:s", "table|t:s", "norm|n:s", "log|l:s", "dist|d+", "reps|r:i", "working|w:s", "if|i:s", "measure|m:s");
     my %options;
 
     # Add any other command line options, and the code to handle them
@@ -1019,6 +1064,15 @@ sub checkParams {
                 print "**ERROR: Unknown output format \"$fmt\"\n"; exec("pod2usage $0"); 
             }
         }
+    }
+    
+    # check the distance type makes sense
+    if(exists $options{'measure'})
+    {
+    	if(($options{'measure'} ne "euclidean") and ($options{'measure'} ne "hellinger") and ($options{'measure'} ne "braycurtis"))
+    	{
+    		die "**ERROR: Distance measure MUST be either \"euclidean\" OR \"hellinger\" OR \"braycurtis\"\n";
+    	}
     }
 
     return \%options;
@@ -1066,14 +1120,15 @@ __DATA__
 
 =head1 SYNOPSIS
 
-    normaliser.pl -table|t DATA_TABLE -norm|n NORM_SIZE[,NORM_SIZE...] -log|l LOG_FILE
+    normaliser.pl -table|t DATA_TABLE -norm|n NORM_SIZE[,NORM_SIZE...]
     
     Normalise a set of DATA tables
 
       -table -t DATA_TABLE                   DATA table to normalise
       -norm -n NORM_SIZE[,NORM_SIZE,...]     Number of sequences to normalise to. Multiples are comma separated
       [-reps -r NUM_REPS]                    Number of reps to take (default: 100)
-      [-working -w WORKING_DIR]              A place to put any files that are created (default: location of DATA_TABLE) 
+      [-measure -m TYPE]					 The type of distance measurement: euclidean OR hellinger OR braycurtis (default: euclidean)
+      [-working -w WORKING_DIR]              A place to put any and all files that are created (default: location of DATA_TABLE) 
       [-out -o OUT_FILE_PREFIX]              Output normalised file prefix (default: DATA_TABLE)
       [-of -f OUTPUT_TYPE[,OUTPUT_TYPE,...]] Output formats: raw,rel,hel,bin (default: raw only) 
       [-if -i INPUT_FORMAT_FILE]             File to specify the type of the input format (default: QIIME style)                    
