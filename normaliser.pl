@@ -143,7 +143,6 @@ $global_wd .= "/";
 
 # output files
 my $global_dist_fh = undef;
-if(exists $options->{'dist'}) { open $global_dist_fh, ">", $global_wd.$options->{'dist'} or die "**ERROR: Could not open file: ".$global_wd.$options->{'dist'}." $!\n"; }
 
 my $log_fn = $global_wd.$global_tablename.".log";
 if(exists $options->{'log'}) { $log_fn = $global_wd.$options->{'log'}; } 
@@ -165,21 +164,35 @@ my $global_table_width = $#global_data_matrix;
 my $global_table_length = $#{$global_data_matrix[0]};
 
 # make rarefactions
-print "Making $global_norm_num_reps multiple rarefactions to $options->{'norm'} individuals...\n";
-makeRarefactions();
+my $global_norm_size = 0; 
+my @norm_sizes = split /,/, $options->{'norm'};
+foreach my $ns (@norm_sizes)
+{
+	# set the current normalisation size
+	$global_norm_size = $ns;
+	
+	# open a file for recording distance measurements (if needed)
+	my $dist_fn = $global_wd."DISTS.$global_norm_size.dat";
+	if(exists $options->{'dist'}) { open $global_dist_fh, ">", $dist_fn or die "**ERROR: Could not open file: $dist_fn $!\n"; }
+	
+	print "Making $global_norm_num_reps multiple rarefactions to $global_norm_size individuals...\n";
+	makeRarefactions();
+	
+	print "Finding centroid table...\n";
+	findCentroidTable();
+	
+	print "Printing output table(s)...\n";
+	printOutput();
+	
+	print "Performing Statistical tests...\n";
+	doStats();
 
-print "Finding centroid table...\n";
-findCentroidTable();
-
-print "Printing output table(s)...\n";
-printOutput();
-
-print "Performing Statistical tests...\n";
-doStats();
+	# close this fella
+	if(exists $options->{'dist'}) {close $global_dist_fh; }
+}
 
 # clean up
 print "Cleaning up...\n";
-if(exists $options->{'dist'}) {close $global_dist_fh; }
 close $global_log_fh;
 
 print "Done!\n----------------------------------------------------------------\n";
@@ -244,7 +257,7 @@ sub printRaw
     # Print the centroid in raw format (raw integers)
     #
     print "\twriting RAW format\n";
-    my $out_fn = $global_out_fn_prefix.".raw.normalised";
+    my $out_fn = $global_out_fn_prefix.".raw.$global_norm_size.normalised";
     open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
     
     # get the centroid
@@ -315,7 +328,7 @@ sub printHel
     # Print the centroid in hellinger format (sqrt of total)
     #
     print "\twriting HEL format\n";
-    my $out_fn = $global_out_fn_prefix.".hel.normalised";
+    my $out_fn = $global_out_fn_prefix.".hel.$global_norm_size.normalised";
     open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
 
     # get the centroid
@@ -390,7 +403,7 @@ sub printRel
     # Print the centroid in relative format (percentage of total)
     #
     print "\twriting REL format\n";    
-    my $out_fn = $global_out_fn_prefix.".rel.normalised";
+    my $out_fn = $global_out_fn_prefix.".rel.$global_norm_size.normalised";
     open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
 
     # get the centroid
@@ -433,7 +446,7 @@ sub printRel
                     # print an entire row
                     foreach my $cell (@{$centroid[$row_index]})
                     {
-                        $row_buffer .= sprintf("%.4f",($cell/$options->{'norm'})).$global_sep;
+                        $row_buffer .= sprintf("%.4f",($cell/$global_norm_size)).$global_sep;
                     }
                 }
                 else
@@ -442,7 +455,7 @@ sub printRel
                     # print one entry from each column
                     foreach my $i (0 .. $global_table_width)
                     {
-                        $row_buffer .=  sprintf("%.4f",(${$centroid[$i]}[$row_index]/$options->{'norm'})).$global_sep;
+                        $row_buffer .=  sprintf("%.4f",(${$centroid[$i]}[$row_index]/$global_norm_size)).$global_sep;
                     }
                 }
             }
@@ -464,7 +477,7 @@ sub printBin
     # Print the centroid in binary format (presence/absense)
     #
     print "\twriting BIN format\n";
-    my $out_fn = $global_out_fn_prefix.".bin.normalised";
+    my $out_fn = $global_out_fn_prefix.".bin.$global_norm_size.normalised";
     open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
 
     # get the centroid
@@ -540,8 +553,8 @@ sub doStats
     # Wrapper for doing stats
     #
     # first we print the average and the centroid to two files
-    my $ave_fn = $global_wd."AVE.dat";
-    my $cent_fn = $global_wd."CENT.dat";
+    my $ave_fn = $global_wd."AVE.$global_norm_size.dat";
+    my $cent_fn = $global_wd."CENT.$global_norm_size.dat";
     open my $ave_fh, ">", $ave_fn or die "**ERROR: Cannot open file: $ave_fn for writing $!\n";
     open my $cent_fh, ">", $cent_fn or die "**ERROR: Cannot open file: $cent_fn for writing $!\n";
     
@@ -578,10 +591,9 @@ sub doStats
         # read in the tmp files
         my $r_str = "ave<-read.csv(\"$ave_fn\",sep=\",\")";
         $R_instance->run($r_str);  
-        print "$r_str\n";  
         $r_str = "cent<-read.csv(\"$cent_fn\",sep=\",\")";
         $R_instance->run($r_str);    
-        print "$r_str\n";  
+
         $R_instance->run(qq`ave<-as.matrix(dist(t(ave), upper=TRUE, diag=TRUE))`);    
         $R_instance->run(qq`cent<-as.matrix(dist(t(cent), upper=TRUE, diag=TRUE))`);
         
@@ -596,7 +608,6 @@ sub doStats
         print $global_log_fh "Too few samples to perform a statistical tests.\n";
     }
 }
-
 
 sub findCentroidTable
 {
@@ -640,7 +651,7 @@ sub findCentroidTable
     $mean_dist /= $global_norm_num_reps;
     
     print $global_log_fh "---------------------------------------------------\n";
-    print $global_log_fh "  Centroid DATA table based normalised statistics\n";
+    print $global_log_fh "  Centroid DATA table based normalised ($global_norm_size) statistics\n";
     print $global_log_fh "---------------------------------------------------\n";
     print $global_log_fh "Max dist:\t$max_dist\n";
     print $global_log_fh "Min dist:\t$min_dist\n";
@@ -733,18 +744,18 @@ sub rarefyTable
         
         # we need to make sure that there are enough guys to make this
         # normalisation feasible
-        if($total_individuals < $options->{'norm'})
+        if($total_individuals < $global_norm_size)
         {
             if($global_type eq 'PN')
             {
-                die "**ERROR: SITE: \"$primary_column_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to $options->{'norm'}\n";
+                die "**ERROR: SITE: \"$primary_column_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to $global_norm_size\n";
             }
             else
             {
-                die "**ERROR: SITE: \"$primary_row_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to $options->{'norm'}\n";
+                die "**ERROR: SITE: \"$primary_row_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to $global_norm_size\n";
             }
         }
-        elsif($total_individuals == $options->{'norm'})
+        elsif($total_individuals == $global_norm_size)
         {
             if($global_type eq 'PN')
             {
@@ -757,7 +768,7 @@ sub rarefyTable
         }
         
         # rarefy!
-        while($total_individuals > $options->{'norm'})
+        while($total_individuals > $global_norm_size)
         {
             my $deduce_index = $non_zero_indicies{int(rand($meta_index))};
             if(0 != ${$row}[$deduce_index])
@@ -977,7 +988,7 @@ sub createParser
 # TEMPLATE SUBS
 ######################################################################
 sub checkParams {
-    my @standard_options = ( "help|h+", "of|f:s", "out|o:s", "table|t:s", "norm|n:i", "log|l:s", "dist|d:s", "reps|r:i", "working|w:s", "if|i:s");
+    my @standard_options = ( "help|h+", "of|f:s", "out|o:s", "table|t:s", "norm|n:s", "log|l:s", "dist|d+", "reps|r:i", "working|w:s", "if|i:s");
     my %options;
 
     # Add any other command line options, and the code to handle them
@@ -1055,19 +1066,19 @@ __DATA__
 
 =head1 SYNOPSIS
 
-    normaliser.pl -table|t DATA_TABLE -norm|n NORMALISATION_SIZE -log|l LOG_FILE
+    normaliser.pl -table|t DATA_TABLE -norm|n NORM_SIZE[,NORM_SIZE...] -log|l LOG_FILE
     
     Normalise a set of DATA tables
 
       -table -t DATA_TABLE                   DATA table to normalise
-      -norm -n NORMALISATION_SIZE            Number of sequences to normalise to
+      -norm -n NORM_SIZE[,NORM_SIZE,...]     Number of sequences to normalise to. Multiples are comma separated
       [-reps -r NUM_REPS]                    Number of reps to take (default: 100)
-      [-working -w WORKING_DIR]              Place to put any files which will be created (default: location of DATA_TABLE) 
+      [-working -w WORKING_DIR]              A place to put any files that are created (default: location of DATA_TABLE) 
       [-out -o OUT_FILE_PREFIX]              Output normalised file prefix (default: DATA_TABLE)
       [-of -f OUTPUT_TYPE[,OUTPUT_TYPE,...]] Output formats: raw,rel,hel,bin (default: raw only) 
       [-if -i INPUT_FORMAT_FILE]             File to specify the type of the input format (default: QIIME style)                    
       [-log -l LOG_FILE]                     File to store results of mantel tests etc... (default: DATA_TABLE.log)
-      [-dist -d DIST_FILE]                   File to store DATA table distances
+      [-dist -d]                             Keep DATA table distances (default: don't keep)
       [-help -h]                             Displays basic usage information
 
 =cut
