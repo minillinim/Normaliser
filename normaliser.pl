@@ -161,7 +161,7 @@ my $global_out_fn_prefix = $global_wd.$global_tablename;
 if(exists $options->{'out'}) { $global_out_fn_prefix = $global_wd.$options->{'out'}; } 
 
 # work out the number of reps we need to do
-my $global_norm_num_reps = 100;
+my $global_norm_num_reps = 1000;
 if(exists $options->{'reps'}) { $global_norm_num_reps = $options->{'reps'}; }
 
 # now, load the DATA table into one huge matrix.
@@ -611,6 +611,7 @@ sub doStats
         $R_instance->run(qq`m_sig <- mantel.DATA\$signif;`);
         print $global_log_fh "Mantel P stat:\t".$R_instance->get('m_sig')."\n";
         print $global_log_fh "Mantel R stat:\t".$R_instance->get('m_stat')."\n";
+        $R_instance->stop();
     }
     else
     {
@@ -1216,7 +1217,7 @@ __DATA__
 
       -table -t DATA_TABLE                   DATA table to normalise
       -norm -n NORM_SIZE[,NORM_SIZE,...]     Number of sequences to normalise to. Multiples are comma separated
-      [-reps -r NUM_REPS]                    Number of reps to take (default: 100)
+      [-reps -r NUM_REPS]                    Number of reps to take (default: 1000)
       [-measure -m TYPE]                     The type of distance measurement: (default: euclidean)
                                                 euclidean   - Plain vanilla eulciean distance
                                                 hellinger   - Euclidean distance of hellinger tranformed matrix
