@@ -2,7 +2,7 @@
 ###############################################################################
 #
 #    normaliser.pl
-#    
+#
 #    Find a centroid DATA table with a given number of individuals
 #
 #    Copyright (C) 2011 Michael Imelfort and Paul Dennis
@@ -153,19 +153,19 @@ $global_wd .= "/";
 my $global_dist_fh = undef;
 
 my $log_fn = $global_wd.$global_tablename.".log";
-if(exists $options->{'log'}) { $log_fn = $global_wd.$options->{'log'}; } 
+if(exists $options->{'log'}) { $log_fn = $global_wd.$options->{'log'}; }
 open my $global_log_fh, ">", $log_fn or die "**ERROR: Could not open file: $log_fn $!\n";
 print $global_log_fh "----------------------------------------------------------------\nDistance measurement is: $global_dist_measure\n";
 
 my $global_out_fn_prefix = $global_wd.$global_tablename;
-if(exists $options->{'out'}) { $global_out_fn_prefix = $global_wd.$options->{'out'}; } 
+if(exists $options->{'out'}) { $global_out_fn_prefix = $global_wd.$options->{'out'}; }
 
 # work out the number of reps we need to do
 my $global_norm_num_reps = 1000;
 if(exists $options->{'reps'}) { $global_norm_num_reps = $options->{'reps'}; }
 
 # now, load the DATA table into one huge matrix.
-my @global_DATA = (); 
+my @global_DATA = ();
 loadDATATable($options->{'table'});
 
 # get the true dimensions of the data
@@ -173,26 +173,26 @@ my $global_table_width = $#global_data_matrix;                  # width is the n
 my $global_table_length = $#{$global_data_matrix[0]};           # length is the total number of species seen across all of the sites
 
 # make rarefactions
-my $global_norm_size = 0; 
+my $global_norm_size = 0;
 my @norm_sizes = split /,/, $options->{'norm'};
 foreach my $ns (@norm_sizes)
 {
     # set the current normalisation size
     $global_norm_size = $ns;
-    
+
     # open a file for recording distance measurements (if needed)
     my $dist_fn = $global_wd."DISTS.$global_norm_size.dat";
     if(exists $options->{'dist'}) { open $global_dist_fh, ">", $dist_fn or die "**ERROR: Could not open file: $dist_fn $!\n"; }
-    
+
     print "Making $global_norm_num_reps multiple rarefactions to $global_norm_size individuals...\n";
     makeRarefactions();
-    
+
     print "Finding centroid table...\n";
     findCentroidTable();
-    
+
     print "Printing output table(s)...\n";
     printOutput();
-    
+
     print "Performing Statistical tests...\n";
     doStats();
 
@@ -214,7 +214,7 @@ sub printOutput
 {
     #-----
     # Print the centroid table
-    # 
+    #
     if(!exists $options->{'of'})
     {
         printRaw();
@@ -256,7 +256,7 @@ sub printHeader
             $sec_index++;
         }
         $format_index++;
-    }    
+    }
     return $format_index;
 }
 
@@ -268,13 +268,13 @@ sub printRaw
     print "\twriting RAW format\n";
     my $out_fn = $global_out_fn_prefix.".raw.$global_norm_size.normalised";
     open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
-    
+
     # get the centroid
     my @centroid = @{$global_rarefied_data[$global_min_rare_index]};
 
     # first print the headers!
     my $saved_index = printHeader(\$out_fh);
-    
+
     # now print the data
     # we need to keep printing until all the rows are done
     my $row_index = 0;
@@ -345,7 +345,7 @@ sub printHel
 
     # first print the headers!
     my $saved_index = printHeader(\$out_fh);
-    
+
     # now print the data
     # we need to keep printing until all the rows are done
     my $row_index = 0;
@@ -411,7 +411,7 @@ sub printRel
     #-----
     # Print the centroid in relative format (percentage of total)
     #
-    print "\twriting REL format\n";    
+    print "\twriting REL format\n";
     my $out_fn = $global_out_fn_prefix.".rel.$global_norm_size.normalised";
     open my $out_fh, ">", $out_fn or die "**ERROR: Could not open file: $out_fn\n";
 
@@ -420,7 +420,7 @@ sub printRel
 
     # first print the headers!
     my $saved_index = printHeader(\$out_fh);
-    
+
     # now print the data
     # we need to keep printing until all the rows are done
     my $row_index = 0;
@@ -494,7 +494,7 @@ sub printBin
 
     # first print the headers!
     my $saved_index = printHeader(\$out_fh);
-    
+
     # now print the data
     # we need to keep printing until all the rows are done
     my $row_index = 0;
@@ -566,10 +566,10 @@ sub doStats
     my $cent_fn = $global_wd."CENT.$global_norm_size.dat";
     open my $ave_fh, ">", $ave_fn or die "**ERROR: Cannot open file: $ave_fn for writing $!\n";
     open my $cent_fh, ">", $cent_fn or die "**ERROR: Cannot open file: $cent_fn for writing $!\n";
-    
-    # get the centroid    
+
+    # get the centroid
     my @centroid = @{$global_rarefied_data[$global_min_rare_index]};
-    
+
     # and print
     for my $i (0..$global_table_width)
     {
@@ -596,16 +596,16 @@ sub doStats
         # load libraries
         $R_instance->run(qq`library(permute);`);
         $R_instance->run(qq`library(vegan);`);
-    
+
         # read in the tmp files
         my $r_str = "ave<-read.csv(\"$ave_fn\",sep=\",\")";
-        $R_instance->run($r_str);  
+        $R_instance->run($r_str);
         $r_str = "cent<-read.csv(\"$cent_fn\",sep=\",\")";
-        $R_instance->run($r_str);    
+        $R_instance->run($r_str);
 
-        $R_instance->run(qq`ave<-as.matrix(dist(t(ave), upper=TRUE, diag=TRUE))`);    
+        $R_instance->run(qq`ave<-as.matrix(dist(t(ave), upper=TRUE, diag=TRUE))`);
         $R_instance->run(qq`cent<-as.matrix(dist(t(cent), upper=TRUE, diag=TRUE))`);
-        
+
         $R_instance->run(qq`mantel.DATA <- mantel(ave,cent);`);
         $R_instance->run(qq`m_stat <- mantel.DATA\$statistic;`);
         $R_instance->run(qq`m_sig <- mantel.DATA\$signif;`);
@@ -625,13 +625,13 @@ sub findCentroidTable
     # find the rarefied table which is closest to the "average"
     # stored in @global_rarefied_average
     #
-    
+
     # work out the distances from the average
     my %distances = ();
     my $rare_index = 0;
     no strict 'refs';
     my $dist_function = "find_".$global_dist_measure."_distFromAve";
-    
+
     $#global_table_norms = -1;
     if("chord" eq $global_dist_measure)
     {
@@ -642,7 +642,7 @@ sub findCentroidTable
 	    {
 	        push @global_table_norms, findNorm($global_rarefied_average[$i]);
 	    }
-         
+
     }
     foreach my $rarefaction (@global_rarefied_data)
     {
@@ -674,7 +674,7 @@ sub findCentroidTable
         }
     }
     $mean_dist /= $global_norm_num_reps;
-    
+
     print $global_log_fh "---------------------------------------------------\n";
     print $global_log_fh "  Centroid DATA table based normalised ($global_norm_size) statistics\n";
     print $global_log_fh "---------------------------------------------------\n";
@@ -687,7 +687,7 @@ sub findCentroidTable
 sub find_chord_distFromAve
 {
     #-----
-    # find the chord distance 
+    # find the chord distance
     # width is the number of sites in the data matrix
     # length is the total number of species seen across all of the sites
     #
@@ -708,7 +708,7 @@ sub findNorm
 {
     #-----
     # Given a vector, find it's norm - used for chord distance
-    # 
+    #
     my ($vec_ref) = @_;
     my $norm = 0;
     foreach my $vector_value (@{$vec_ref})
@@ -721,7 +721,7 @@ sub findNorm
 sub find_bineuc_distFromAve
 {
     #-----
-    # find the binary euclidean distance 
+    # find the binary euclidean distance
     #
     my ($rare_ref) = @_;
     my $dist = 0;
@@ -755,7 +755,7 @@ sub find_bineuc_distFromAve
 sub find_euclidean_distFromAve
 {
     #-----
-    # find the euclidean distance 
+    # find the euclidean distance
     #
     my ($rare_ref) = @_;
     my $dist = 0;
@@ -772,7 +772,7 @@ sub find_euclidean_distFromAve
 sub find_hellinger_distFromAve
 {
     #-----
-    # find the hellinger distance 
+    # find the hellinger distance
     #
     my ($rare_ref) = @_;
     my $dist = 0;
@@ -789,7 +789,7 @@ sub find_hellinger_distFromAve
 sub find_bray_distFromAve
 {
     #-----
-    # find the bray curtis distance 
+    # find the bray curtis distance
     #
     my ($rare_ref) = @_;
     my $dist = 0;
@@ -821,16 +821,16 @@ sub makeRarefactions
         {
             push @tmp_array, 0;
         }
-        push @global_rarefied_average, \@tmp_array; 
+        push @global_rarefied_average, \@tmp_array;
     }
-    
+
     for my $counter (1 .. $global_norm_num_reps)
     {
         my @tmp_data_table = @{ dclone(\@global_data_matrix) };
         rarefyTable(\@tmp_data_table);
         push @global_rarefied_data, \@tmp_data_table;
     }
-    
+
     # now average
     for my $i (0..$global_table_width)
     {
@@ -854,24 +854,29 @@ sub rarefyTable
     {
         # get the total number of individuals
         my $total_individuals = 0;
-        
+
         # use these vars to select which cels to diminish (randomly)
         my %non_zero_indicies = ();
         my $meta_index = 0;
         my $cell_index = 0;
-        
+        my $cumu = 0;
+        my @cumu_counts = ();
+
         # set up our vars
         foreach my $cell (@{$row})
         {
             if(0 != $cell)
             {
                 $total_individuals += $cell;
+                $cumu += $cell;
+                push @cumu_counts, $cumu;
                 $non_zero_indicies{$meta_index} = $cell_index;
                 $meta_index++;
             }
             $cell_index++;
         }
-        
+        #print join(",", @cumu_counts), "\n";
+
         # we need to make sure that there are enough guys to make this
         # normalisation feasible
         if($total_individuals < $global_norm_size)
@@ -896,18 +901,28 @@ sub rarefyTable
                 print "**WARNING: SITE: \"$primary_row_descriptor[$row_index]\" has $total_individuals total entries, and you are trying to normalise to the same amount\n";
             }
         }
-        
+
         # rarefy!
         while($total_individuals > $global_norm_size)
         {
-            my $deduce_index = $non_zero_indicies{int(rand($meta_index))};
+        	my $rr = int(rand($cumu_counts[-1]));
+        	my $deduce_index = 0;
+        	foreach my $idx (0..$meta_index)
+        	{
+        		if($cumu_counts[$idx] >= $rr)
+        		{
+        			$deduce_index = $non_zero_indicies{$idx};
+        			last
+        		}
+        	}
+
             if(0 != ${$row}[$deduce_index])
             {
                 ${$row}[$deduce_index]--;
                 $total_individuals--;
             }
         }
-        
+
         # add this guy to the averages table
         $cell_index = 0;
         foreach my $cell (@{$row})
@@ -944,7 +959,7 @@ sub loadDATATable
             }
             elsif($global_input_format[$format_index] eq "S")
             {
-                # secondary descriptor 
+                # secondary descriptor
                 push @secondary_column_descriptors, $_;
             }
             else
@@ -975,7 +990,7 @@ sub loadDATATable
 
             my @data_fields = split $global_sep, $_;
             my $row_index = 0;
-            
+
             # now we're definitely on a data line
             if($global_type eq 'NP')
             {
@@ -993,7 +1008,7 @@ sub loadDATATable
                         push @{$global_data_ref},$field;
                     }
                     $row_index++;
-                }                
+                }
             }
             else
             {
@@ -1007,13 +1022,13 @@ sub loadDATATable
             }
         }
     }
-    close $fh; 
+    close $fh;
 }
 
 sub createParser
 {
     #-----
-    # Called on the first data line 
+    # Called on the first data line
     # sets up the parsing array
     #
     my ($saved_index) = @_;
@@ -1031,7 +1046,7 @@ sub createParser
             {
                 $global_num_rear_info_columns++;
             }
-            
+
         }
         elsif($global_input_format[$counter] eq "M")
         {
@@ -1049,7 +1064,7 @@ sub createParser
     $global_num_samples = $global_total_columns - $global_num_front_info_columns - $global_num_rear_info_columns - $global_num_ignore_columns;
     print "Data file contains $global_num_front_info_columns front info column(s), $global_num_rear_info_columns rear info column(s) and $global_num_samples data columns\n";
     print "Ignoring $global_num_ignore_columns columns\n----------------------------------------------------------------\n";
-    
+
     # determine the indicies of the data and info columns
     my $row_index = 0;
     foreach my $counter ($saved_index .. $#global_input_format)
@@ -1075,7 +1090,7 @@ sub createParser
         {
             # data!
             my $last_row_index = $row_index + $global_num_samples;
-            
+
             # we need to do things a little differently depending on the format of
             # the data. Becuase the dat to normalise may be row-wise or column-wise
             if($global_type eq 'NP')
@@ -1122,7 +1137,7 @@ sub checkParams {
     my %options;
 
     # Add any other command line options, and the code to handle them
-    # 
+    #
     GetOptions( \%options, @standard_options );
 
     # if no arguments supplied print the usage and exit
@@ -1139,26 +1154,26 @@ sub checkParams {
     if(!exists $options{'norm'} ) { print "**ERROR: You need to specify the number of sequences to normalise to\n"; exec("pod2usage $0"); }
 
     # check that the output formats make sense
-    if(exists $options{'of'}) 
+    if(exists $options{'of'})
     {
         my @outfmts = split /,/, $options{'of'};
         foreach my $fmt (@outfmts)
         {
             if(($fmt ne "raw") and ($fmt ne "rel") and ($fmt ne "hel") and ($fmt ne "bin"))
             {
-                print "**ERROR: Unknown output format \"$fmt\"\n"; exec("pod2usage $0"); 
+                print "**ERROR: Unknown output format \"$fmt\"\n"; exec("pod2usage $0");
             }
         }
     }
-    
+
     # check the distance type makes sense
     if(exists $options{'measure'})
     {
         if(
-            ($options{'measure'} ne "euclidean") and 
-            ($options{'measure'} ne "hellinger") and 
-            ($options{'measure'} ne "bray") and 
-            ($options{'measure'} ne "bineuc") and 
+            ($options{'measure'} ne "euclidean") and
+            ($options{'measure'} ne "hellinger") and
+            ($options{'measure'} ne "bray") and
+            ($options{'measure'} ne "bineuc") and
             ($options{'measure'} ne "chord")
           )
         {
@@ -1171,14 +1186,14 @@ sub checkParams {
 
 sub printAtStart {
 print<<"EOF";
----------------------------------------------------------------- 
+----------------------------------------------------------------
  $0
  Copyright (C) 2011 Michael Imelfort and Paul Dennis
-    
+
  This program comes with ABSOLUTELY NO WARRANTY;
  This is free software, and you are welcome to redistribute it
  under certain conditions: See the source for more details.
----------------------------------------------------------------- 
+----------------------------------------------------------------
 EOF
 }
 
@@ -1187,10 +1202,10 @@ __DATA__
 =head1 NAME
 
     normaliser.pl
-    
+
 =head1 COPYRIGHT
 
-   copyright (C) 2011 Michael Imelfort and Paul Dennis
+   copyright (C) 2011,2013 Michael Imelfort and Paul Dennis
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1212,7 +1227,7 @@ __DATA__
 =head1 SYNOPSIS
 
     normaliser.pl -table|t DATA_TABLE -norm|n NORM_SIZE[,NORM_SIZE...]
-    
+
     Normalise a set of DATA tables
 
       -table -t DATA_TABLE                   DATA table to normalise
@@ -1224,10 +1239,10 @@ __DATA__
                                                 bray        - Bray curtis distance
                                                 chord       - Chord distance
                                                 bineuc      - Euclidean distance of presence absence matrix
-      [-working -w WORKING_DIR]              A place to put any and all files that are created (default: location of DATA_TABLE) 
+      [-working -w WORKING_DIR]              A place to put any and all files that are created (default: location of DATA_TABLE)
       [-out -o OUT_FILE_PREFIX]              Output normalised file prefix (default: DATA_TABLE)
-      [-of -f OUTPUT_TYPE[,OUTPUT_TYPE,...]] Output formats: raw,rel,hel,bin (default: raw only) 
-      [-if -i INPUT_FORMAT_FILE]             File to specify the type of the input format (default: QIIME style)                    
+      [-of -f OUTPUT_TYPE[,OUTPUT_TYPE,...]] Output formats: raw,rel,hel,bin (default: raw only)
+      [-if -i INPUT_FORMAT_FILE]             File to specify the type of the input format (default: QIIME style)
       [-log -l LOG_FILE]                     File to store results of mantel tests etc... (default: DATA_TABLE.log)
       [-dist -d]                             Keep DATA table distances (default: don't keep)
       [-help -h]                             Displays basic usage information
